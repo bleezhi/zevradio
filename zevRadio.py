@@ -22,6 +22,7 @@ app = Flask(
 
 lock = threading.Lock()
 state = {"on_air": False, "now_playing": None}
+FFMPEG_PATH = ROOT / "ffmpeg" / ("ffmpeg.exe" if __import__("os").name == "nt" else "ffmpeg")
 
 
 def load_config():
@@ -92,7 +93,7 @@ def ffmpeg_command(filename):
     absolute = (ROOT / filename).resolve()
 
     return [
-        "ffmpeg", "-hide_banner", "-loglevel", "warning", "-nostdin",
+        str(FFMPEG_PATH), "-hide_banner", "-loglevel", "warning", "-nostdin",
         "-re", "-i", str(absolute), "-vn",
         "-ac", "2", "-ar", "44100",
         "-c:a", "libmp3lame", "-b:a", "128k",
@@ -224,8 +225,8 @@ def stream():
         if not state["on_air"]:
             return "zevRadio is OFF AIR. Start the station from the web control panel.", 503
 
-    if shutil.which("ffmpeg") is None:
-        return "FFmpeg was not found. Install FFmpeg and put ffmpeg.exe on PATH.", 500
+    if not FFMPEG_PATH.is_file():
+        return "FFmpeg was not found. Put ffmpeg.exe in the zevRadio/ffmpeg/ folder.", 500
 
     def generate():
         while True:
