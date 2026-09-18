@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import json
 import random
+import shutil
 import subprocess
-import tempfile
 import threading
 from pathlib import Path
 
@@ -46,20 +46,14 @@ def library():
     config = load_config()
     result = {}
     for category, folder in config["folders"].items():
-        result[category] = scan_directory(ROOT / folder)
+        folder_path = Path(folder)
+        if not folder_path.is_absolute():
+            folder_path = ROOT / folder_path
+        result[category] = scan_directory(folder_path)
     return result
 
 
 def build_rotation():
-    """
-    Build a small repeatable test rotation.
-
-    This is intentionally simple for the first live backend:
-      music -> ident -> music -> ad -> music -> sweeper -> ad
-
-    Empty categories are skipped, so the station can still run with a
-    tiny library while it is being tested locally.
-    """
     lib = library()
 
     music = lib.get("music", [])
@@ -71,8 +65,7 @@ def build_rotation():
     if not music:
         return []
 
-    rotation = []
-    rotation.append(random.choice(music))
+    rotation = [random.choice(music)]
 
     if idents:
         rotation.append(random.choice(idents))
@@ -95,22 +88,45 @@ def build_rotation():
     return rotation
 
 
-def make_concat_file(files):
-    temp = tempfile.NamedTemporaryFile(
-        mode="w",
-        suffix=".txt",
-        prefix="zevradio_",
-        delete=False,
-        encoding="utf-8",
+def ffmpeg_command(files):
+    """
+    Build an FFmpeg concat-filter command.
+
+    The concat demuxer is tempting here, but it can fail when the library
+    contains MP3/WAV files with different sample rates or channel layouts.
+    The filter version normalizes every input to stereo 44.1 kHz first.
+    """
+    inputs = []
+    filters = []
+
+    for index, filename in enumerate(files):
+        absolute = (ROOT / filename).resolve()
+        inputs += ["-i", str(absolute)]
+        filters.append(
+            f"[{index}:a]aresample=44100,"
+            f"aformat=sample_fmts=fltp:channel_layouts=stereo[a{index}]"
+        )
+
+    labels = "".join(f"[a{i}]" for i in range(len(files)))
+    filters.append(
+        f"{labels}concat=n={len(files)}:v=0:a=1[out]"
     )
 
-    for filename in files:
-        absolute = (ROOT / filename).resolve()
-        escaped = str(absolute).replace("'", "'\\''")
-        temp.write(f"file '{escaped}'\n")
-
-    temp.close()
-    return Path(temp.name)
+    return [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel", "error",
+        "-nostdin",
+        *inputs,
+        "-filter_complex", ";".join(filters),
+        "-map", "[out]",
+        "-c:a", "libmp3lame",
+        "-b:a", "128k",
+        "-ar", "44100",
+        "-ac", "2",
+        "-f", "mp3",
+        "pipe:1",
+    ]
 
 
 @app.get("/")
@@ -192,6 +208,7 @@ def radio_control():
         if action == "start":
             state["on_air"] = True
             return jsonify({"ok": True, "on_air": True})
+
         if action == "stop":
             state["on_air"] = False
             state["now_playing"] = None
@@ -208,86 +225,85 @@ def test_next():
 
     with lock:
         state["now_playing"] = random.choice(tracks)
+
     return jsonify({"ok": True, "now_playing": state["now_playing"]})
 
 
 @app.get("/radio")
 def radio():
     """
-    Local HTTP audio stream.
+    Actual local MP3 stream.
 
-    FFmpeg is started only when a client connects to /radio and the station
-    is ON AIR. The process continuously loops the generated test rotation.
-    This is deliberately local-first so the stream can be tested before
-    connecting zevRadio to anything external such as SimTX.
+    Start the station in the web UI, then open /radio in VLC.
+    FFmpeg normalizes mixed MP3/WAV/etc. files before encoding them to
+    one consistent 128 kbps, 44.1 kHz stereo MP3 stream.
     """
     with lock:
         if not state["on_air"]:
-            return "zevRadio is OFF AIR. Start the station from the web control panel.", 503
-
-    rotation = build_rotation()
-    if not rotation:
-        return "No music files found in the configured music directory.", 503
-
-    concat_file = make_concat_file(rotation)
-
-    def generate():
-        process = None
-        try:
-            process = subprocess.Popen(
-                [
-                    "ffmpeg",
-                    "-hide_banner",
-                    "-loglevel", "error",
-                    "-re",
-                    "-stream_loop", "-1",
-                    "-f", "concat",
-                    "-safe", "0",
-                    "-i", str(concat_file),
-                    "-vn",
-                    "-ac", "2",
-                    "-ar", "44100",
-                    "-c:a", "libmp3lame",
-                    "-b:a", "128k",
-                    "-f", "mp3",
-                    "pipe:1",
-                ],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                bufsize=0,
+            return (
+                "zevRadio is OFF AIR. Start the station from the web control panel.",
+                503,
             )
 
-            while True:
-                chunk = process.stdout.read(16384)
-                if not chunk:
+    if shutil.which("ffmpeg") is None:
+        return (
+            "FFmpeg was not found. Install FFmpeg and make sure ffmpeg.exe is on PATH.",
+            500,
+        )
+
+    def generate():
+        while True:
+            with lock:
+                if not state["on_air"]:
                     break
 
-                # Update now-playing approximately from the generated
-                # rotation. This is enough for the first test backend.
-                yield chunk
+            rotation = build_rotation()
+            if not rotation:
+                break
 
-                with lock:
-                    if not state["on_air"]:
-                        break
-
-        except FileNotFoundError:
-            yield b""
-        finally:
-            if process is not None:
-                process.kill()
-                process.wait()
+            process = None
 
             try:
-                concat_file.unlink()
-            except FileNotFoundError:
-                pass
+                process = subprocess.Popen(
+                    ffmpeg_command(rotation),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    bufsize=0,
+                )
+
+                while True:
+                    chunk = process.stdout.read(16384)
+
+                    if not chunk:
+                        break
+
+                    yield chunk
+
+                    with lock:
+                        if not state["on_air"]:
+                            break
+
+            except (BrokenPipeError, ConnectionResetError):
+                break
+
+            finally:
+                if process is not None:
+                    if process.poll() is None:
+                        process.kill()
+                    process.wait()
+
+            with lock:
+                if not state["on_air"]:
+                    break
 
     return Response(
         stream_with_context(generate()),
         mimetype="audio/mpeg",
         headers={
+            "Content-Type": "audio/mpeg",
             "Cache-Control": "no-cache, no-store, must-revalidate",
             "Pragma": "no-cache",
+            "Accept-Ranges": "none",
             "X-ZevRadio-Stream": "local-test",
         },
     )
@@ -295,10 +311,16 @@ def radio():
 
 if __name__ == "__main__":
     config = load_config()
+
     for folder in config["folders"].values():
         path = Path(folder)
         if not path.is_absolute():
             path = ROOT / path
         path.mkdir(parents=True, exist_ok=True)
 
-    app.run(host=config["host"], port=int(config["port"]), debug=False, threaded=True)
+    app.run(
+        host=config["host"],
+        port=int(config["port"]),
+        debug=False,
+        threaded=True,
+    )
