@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>zevRadio Player</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background:#111; color:#fff; display:grid; place-items:center; min-height:100vh; margin:0; }
+    main { width:min(700px,90vw); text-align:center; padding:40px; }
+    audio { width:100%; margin:25px 0; }
+    a { color:#8ab4ff; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>zevRadio</h1>
+    <p>Local test stream</p>
+    <audio controls autoplay preload="none" src="/stream"></audio>
+    <p><a href="/radio.m3u">Open zevRadio playlist (.m3u)</a></p>
+    <p><a href="/">Back to control panel</a></p>
+  </main>
+</body>
+</html>
