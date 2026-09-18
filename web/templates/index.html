@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>zevRadio Control</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <div class="brand">zevRadio</div>
+        <div class="muted">Zev network radio control</div>
+      </div>
+      <div id="status" class="status off">OFF AIR</div>
+    </header>
+
+    <section class="hero">
+      <h1 id="station">zevRadio</h1>
+      <p id="now">Nothing playing</p>
+      <button id="toggle">START RADIO</button>
+      <button id="next" class="secondary">TEST NEXT TRACK</button>
+    </section>
+
+    <section>
+      <h2>Audio directories</h2>
+      <div class="form">
+        <select id="category">
+          <option value="music">Music</option>
+          <option value="ads">Ads</option>
+          <option value="promos">Promos</option>
+          <option value="idents">Idents</option>
+          <option value="sweepers">Sweepers</option>
+          <option value="news">News</option>
+          <option value="weather">Weather</option>
+        </select>
+        <input id="directory" placeholder="audio/music">
+        <button id="save">Save directory</button>
+      </div>
+      <div id="folders" class="folders"></div>
+    </section>
+
+    <section>
+      <h2>Library</h2>
+      <div id="library" class="library"></div>
+    </section>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>
