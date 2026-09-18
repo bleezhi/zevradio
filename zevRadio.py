@@ -238,54 +238,92 @@ def stream():
         return "FFmpeg was not found. Put ffmpeg.exe in the zevRadio/ffmpeg/ folder.", 500
 
     def generate():
-        while True:
-            with lock:
-                if not state["on_air"]:
-                    break
+        encoder = None
 
-            rotation = build_rotation()
-            if not rotation:
-                break
+        try:
+            encoder = subprocess.Popen(
+                [
+                    str(ffmpeg_path), "-hide_banner", "-loglevel", "warning",
+                    "-nostdin",
+                    "-f", "s16le", "-ar", "44100", "-ac", "2", "-i", "pipe:0",
+                    "-c:a", "libmp3lame", "-b:a", "128k",
+                    "-f", "mp3", "pipe:1",
+                ],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                bufsize=0,
+            )
 
-            for track in rotation:
+            while True:
                 with lock:
                     if not state["on_air"]:
                         break
-                    state["now_playing"] = track
 
-                process = None
-                try:
-                    process = subprocess.Popen(
-                        ffmpeg_command(track),
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        bufsize=0,
-                    )
-                    while True:
-                        chunk = process.stdout.read(16384)
-                        if not chunk:
+                rotation = build_rotation()
+                if not rotation:
+                    break
+
+                for track in rotation:
+                    with lock:
+                        if not state["on_air"]:
                             break
-                        yield chunk
-                        with lock:
-                            if not state["on_air"]:
-                                break
-                    stderr_output = process.stderr.read().decode("utf-8", errors="replace").strip()
-                    return_code = process.wait()
-                    if return_code != 0 and stderr_output:
-                        print("[zevRadio] FFmpeg failed for " + track + ":\n" + stderr_output)
-                except (BrokenPipeError, ConnectionResetError):
-                    break
-                finally:
-                    if process is not None and process.poll() is None:
-                        process.kill()
-                        process.wait()
-                with lock:
-                    if not state["on_air"]:
-                        break
+                        state["now_playing"] = track
 
-            with lock:
-                if not state["on_air"]:
+                    decoder = None
+                    try:
+                        decoder = subprocess.Popen(
+                            [
+                                str(ffmpeg_path), "-hide_banner", "-loglevel", "warning",
+                                "-nostdin", "-re", "-i", str((ROOT / track).resolve()),
+                                "-vn", "-f", "s16le", "-ar", "44100", "-ac", "2", "pipe:1",
+                            ],
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            bufsize=0,
+                        )
+
+                        while True:
+                            pcm = decoder.stdout.read(32768)
+                            if not pcm:
+                                break
+                            encoder.stdin.write(pcm)
+
+                            with lock:
+                                if not state["on_air"]:
+                                    break
+
+                        decoder.wait()
+
+                        if decoder.returncode != 0:
+                            error = decoder.stderr.read().decode("utf-8", errors="replace").strip()
+                            if error:
+                                print("[zevRadio] FFmpeg decoder failed for " + track + ":\\n" + error)
+
+                    except (BrokenPipeError, ConnectionResetError):
+                        break
+                    finally:
+                        if decoder is not None and decoder.poll() is None:
+                            decoder.kill()
+                            decoder.wait()
+
+                    with lock:
+                        if not state["on_air"]:
+                            break
+
+                if encoder.poll() is not None:
                     break
+
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        finally:
+            if encoder is not None:
+                if encoder.poll() is None:
+                    try:
+                        encoder.stdin.close()
+                    except (BrokenPipeError, OSError):
+                        pass
+                    encoder.wait()
 
     return Response(
         stream_with_context(generate()),
