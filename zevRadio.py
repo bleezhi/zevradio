@@ -11,7 +11,16 @@ ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = ROOT / "config.json"
 AUDIO_EXTENSIONS = {".mp3", ".wav", ".ogg", ".flac", ".m4a", ".aac"}
 
-app = Flask(__name__)
+# The UI lives under web/, so explicitly tell Flask where to find templates
+# and static assets. Flask otherwise looks for templates/ and static/ beside
+# this Python file.
+app = Flask(
+    __name__,
+    template_folder="web/templates",
+    static_folder="web/static",
+    static_url_path="/static",
+)
+
 lock = threading.Lock()
 state = {"on_air": False, "now_playing": None}
 
@@ -54,7 +63,7 @@ def api_status():
             "station": load_config()["station_name"],
             "on_air": state["on_air"],
             "now_playing": state["now_playing"],
-            "stream": "/radio"
+            "stream": "/radio",
         })
 
 
@@ -105,7 +114,7 @@ def remove_directory():
         "idents": "audio/idents",
         "sweepers": "audio/sweepers",
         "news": "audio/news",
-        "weather": "audio/weather"
+        "weather": "audio/weather",
     }
     config["folders"][category] = defaults[category]
     save_config(config)
