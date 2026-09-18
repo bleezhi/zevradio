@@ -234,8 +234,10 @@ def stream():
         if not state["on_air"]:
             return "zevRadio is OFF AIR. Start the station from the web control panel.", 503
 
-    if not FFMPEG_PATH.is_file():
-        return "FFmpeg was not found. Put ffmpeg.exe in the zevRadio/ffmpeg/ folder.", 500
+    ffmpeg_path = find_ffmpeg()
+    if ffmpeg_path is None:
+        checked = "\n".join(str(p) for p in FFMPEG_CANDIDATES)
+        return "FFmpeg was not found. Checked:\n" + checked, 500
 
     def generate():
         encoder = None
