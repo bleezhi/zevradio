@@ -88,35 +88,15 @@ def build_rotation():
     return rotation
 
 
-def ffmpeg_command(files):
-    inputs = []
-    filters = []
-
-    for index, filename in enumerate(files):
-        absolute = (ROOT / filename).resolve()
-        inputs += ["-i", str(absolute)]
-        filters.append(
-            f"[{index}:a]aresample=44100,"
-            f"aformat=sample_fmts=fltp:channel_layouts=stereo[a{index}]"
-        )
-
-    labels = "".join(f"[a{i}]" for i in range(len(files)))
-    filters.append(f"{labels}concat=n={len(files)}:v=0:a=1[out]")
+def ffmpeg_command(filename):
+    absolute = (ROOT / filename).resolve()
 
     return [
-        "ffmpeg",
-        "-hide_banner",
-        "-loglevel", "warning",
-        "-nostdin",
-        *inputs,
-        "-filter_complex", ";".join(filters),
-        "-map", "[out]",
-        "-c:a", "libmp3lame",
-        "-b:a", "128k",
-        "-ar", "44100",
-        "-ac", "2",
-        "-f", "mp3",
-        "pipe:1",
+        "ffmpeg", "-hide_banner", "-loglevel", "warning", "-nostdin",
+        "-re", "-i", str(absolute), "-vn",
+        "-ac", "2", "-ar", "44100",
+        "-c:a", "libmp3lame", "-b:a", "128k",
+        "-f", "mp3", "pipe:1",
     ]
 
 
@@ -229,7 +209,8 @@ def radio_page():
 @app.get("/radio.m3u")
 def radio_m3u():
     # VLC and other players can open this playlist directly.
-    body = "#EXTM3U\n#EXTINF:-1,zevRadio\nhttp://127.0.0.1:8080/stream\n"
+    stream_url = request.host_url.rstrip("/") + "/stream"
+    body = "#EXTM3U\n#EXTINF:-1,zevRadio\n" + stream_url + "\n"
     return Response(
         body,
         mimetype="audio/x-mpegurl",
@@ -256,36 +237,41 @@ def stream():
             if not rotation:
                 break
 
-            process = None
-
-            try:
-                process = subprocess.Popen(
-                    ffmpeg_command(rotation),
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.DEVNULL,
-                    bufsize=0,
-                )
-
-                while True:
-                    chunk = process.stdout.read(16384)
-
-                    if not chunk:
+            for track in rotation:
+                with lock:
+                    if not state["on_air"]:
                         break
+                    state["now_playing"] = track
 
-                    yield chunk
-
-                    with lock:
-                        if not state["on_air"]:
+                process = None
+                try:
+                    process = subprocess.Popen(
+                        ffmpeg_command(track),
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        bufsize=0,
+                    )
+                    while True:
+                        chunk = process.stdout.read(16384)
+                        if not chunk:
                             break
-
-            except (BrokenPipeError, ConnectionResetError):
-                break
-
-            finally:
-                if process is not None:
-                    if process.poll() is None:
+                        yield chunk
+                        with lock:
+                            if not state["on_air"]:
+                                break
+                    stderr_output = process.stderr.read().decode("utf-8", errors="replace").strip()
+                    return_code = process.wait()
+                    if return_code != 0 and stderr_output:
+                        print("[zevRadio] FFmpeg failed for " + track + ":\n" + stderr_output)
+                except (BrokenPipeError, ConnectionResetError):
+                    break
+                finally:
+                    if process is not None and process.poll() is None:
                         process.kill()
-                    process.wait()
+                        process.wait()
+                with lock:
+                    if not state["on_air"]:
+                        break
 
             with lock:
                 if not state["on_air"]:
