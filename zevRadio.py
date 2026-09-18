@@ -89,13 +89,6 @@ def build_rotation():
 
 
 def ffmpeg_command(files):
-    """
-    Build an FFmpeg concat-filter command.
-
-    The concat demuxer is tempting here, but it can fail when the library
-    contains MP3/WAV files with different sample rates or channel layouts.
-    The filter version normalizes every input to stereo 44.1 kHz first.
-    """
     inputs = []
     filters = []
 
@@ -108,14 +101,12 @@ def ffmpeg_command(files):
         )
 
     labels = "".join(f"[a{i}]" for i in range(len(files)))
-    filters.append(
-        f"{labels}concat=n={len(files)}:v=0:a=1[out]"
-    )
+    filters.append(f"{labels}concat=n={len(files)}:v=0:a=1[out]")
 
     return [
         "ffmpeg",
         "-hide_banner",
-        "-loglevel", "error",
+        "-loglevel", "warning",
         "-nostdin",
         *inputs,
         "-filter_complex", ";".join(filters),
@@ -141,7 +132,8 @@ def api_status():
             "station": load_config()["station_name"],
             "on_air": state["on_air"],
             "now_playing": state["now_playing"],
-            "stream": "/radio",
+            "stream": "/stream",
+            "playlist": "/radio.m3u",
         })
 
 
@@ -230,26 +222,29 @@ def test_next():
 
 
 @app.get("/radio")
-def radio():
-    """
-    Actual local MP3 stream.
+def radio_page():
+    return render_template("radio.html")
 
-    Start the station in the web UI, then open /radio in VLC.
-    FFmpeg normalizes mixed MP3/WAV/etc. files before encoding them to
-    one consistent 128 kbps, 44.1 kHz stereo MP3 stream.
-    """
+
+@app.get("/radio.m3u")
+def radio_m3u():
+    # VLC and other players can open this playlist directly.
+    body = "#EXTM3U\n#EXTINF:-1,zevRadio\nhttp://127.0.0.1:8080/stream\n"
+    return Response(
+        body,
+        mimetype="audio/x-mpegurl",
+        headers={"Content-Disposition": "inline; filename=zevRadio.m3u"},
+    )
+
+
+@app.get("/stream")
+def stream():
     with lock:
         if not state["on_air"]:
-            return (
-                "zevRadio is OFF AIR. Start the station from the web control panel.",
-                503,
-            )
+            return "zevRadio is OFF AIR. Start the station from the web control panel.", 503
 
     if shutil.which("ffmpeg") is None:
-        return (
-            "FFmpeg was not found. Install FFmpeg and make sure ffmpeg.exe is on PATH.",
-            500,
-        )
+        return "FFmpeg was not found. Install FFmpeg and put ffmpeg.exe on PATH.", 500
 
     def generate():
         while True:
@@ -267,7 +262,7 @@ def radio():
                 process = subprocess.Popen(
                     ffmpeg_command(rotation),
                     stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
                     bufsize=0,
                 )
 
@@ -304,7 +299,7 @@ def radio():
             "Cache-Control": "no-cache, no-store, must-revalidate",
             "Pragma": "no-cache",
             "Accept-Ranges": "none",
-            "X-ZevRadio-Stream": "local-test",
+            "icy-name": "zevRadio",
         },
     )
 
