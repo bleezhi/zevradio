@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import random
-import shutil
 import subprocess
 import threading
 from pathlib import Path
@@ -22,7 +21,17 @@ app = Flask(
 
 lock = threading.Lock()
 state = {"on_air": False, "now_playing": None}
-FFMPEG_PATH = ROOT / "ffmpeg" / ("ffmpeg.exe" if __import__("os").name == "nt" else "ffmpeg")
+FFMPEG_NAME = "ffmpeg.exe" if __import__("os").name == "nt" else "ffmpeg"
+FFMPEG_CANDIDATES = [
+    ROOT / "ffmpeg" / FFMPEG_NAME,
+    ROOT.parent / "ffmpeg" / FFMPEG_NAME,
+]
+
+def find_ffmpeg():
+    for path in FFMPEG_CANDIDATES:
+        if path.is_file():
+            return path
+    return None
 
 
 def load_config():
@@ -93,7 +102,7 @@ def ffmpeg_command(filename):
     absolute = (ROOT / filename).resolve()
 
     return [
-        str(FFMPEG_PATH), "-hide_banner", "-loglevel", "warning", "-nostdin",
+        str(find_ffmpeg()), "-hide_banner", "-loglevel", "warning", "-nostdin",
         "-re", "-i", str(absolute), "-vn",
         "-ac", "2", "-ar", "44100",
         "-c:a", "libmp3lame", "-b:a", "128k",
