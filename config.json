@@ -1,0 +1,14 @@
+{
+  "host": "127.0.0.1",
+  "port": 8080,
+  "station_name": "zevRadio",
+  "folders": {
+    "music": "audio/music",
+    "ads": "audio/ads",
+    "promos": "audio/promos",
+    "idents": "audio/idents",
+    "sweepers": "audio/sweepers",
+    "news": "audio/news",
+    "weather": "audio/weather"
+  }
+}
