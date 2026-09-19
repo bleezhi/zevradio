@@ -1,17 +1,11 @@
 #!/usr/bin/env python3
 """
-zevWeather - real-time weather bulletin generator for zevRadio.
+zevWeather - live weather bulletin + direct VB-CABLE playback.
 
-Fetches weather for Poznan, Poland from Open-Meteo, generates a WAV
-announcement using Windows SAPI, then plays it exclusively to:
+The generated bulletin is played directly to:
     CABLE Input (VB-Audio Virtual Cable)
 
-Requirements:
-    Python 3.10+
-    Windows
-    pip install sounddevice
-
-No weather API key required.
+It never falls back to the Windows default speakers.
 """
 
 from __future__ import annotations
@@ -24,57 +18,71 @@ import urllib.parse
 import urllib.request
 from datetime import datetime
 from pathlib import Path
+import wave
 
 try:
+    import numpy as np
     import sounddevice as sd
-    import wave
 except ImportError:
-    print("[zevWeather] Missing dependency. Install it with:")
-    print("    python -m pip install sounddevice")
+    print("[zevWeather] Missing dependencies.")
+    print("[zevWeather] Run:")
+    print("    python -m pip install sounddevice numpy")
     raise
 
 LATITUDE = 52.4064
 LONGITUDE = 16.9252
-LOCATION_NAME = "Poznan"
 OUTPUT_FILE = Path(__file__).with_name("zevweather.wav")
-CABLE_DEVICE_NAME = "CABLE Input"
-USER_AGENT = "zevWeather/1.1"
+USER_AGENT = "zevWeather/1.2"
+CABLE_DEVICE = "CABLE Input"
 
 
-def find_cable_device() -> int:
-    """Find the VB-Audio CABLE Input output device."""
+def find_cable_device() -> tuple[int, str]:
+    """Find the actual playback endpoint for VB-CABLE, preferably WASAPI."""
     devices = sd.query_devices()
+    hostapis = sd.query_hostapis()
 
-    matches = []
+    candidates = []
+
     for index, device in enumerate(devices):
         name = device["name"]
-        if CABLE_DEVICE_NAME.lower() in name.lower() and device["max_output_channels"] > 0:
-            matches.append((index, name))
 
-    if not matches:
-        print("[zevWeather] ERROR: Could not find 'CABLE Input'.")
-        print("[zevWeather] Available output devices:")
+        # IMPORTANT: We want CABLE Input, not CABLE In 16ch or CABLE Output.
+        if name.strip().lower() != CABLE_DEVICE.lower():
+            continue
+        if device["max_output_channels"] < 1:
+            continue
+
+        hostapi_name = hostapis[device["hostapi"]]["name"]
+        candidates.append((index, name, hostapi_name))
+
+    if not candidates:
+        print("[zevWeather] ERROR: CABLE Input playback device not found.")
+        print("[zevWeather] Output devices detected:")
         for index, device in enumerate(devices):
             if device["max_output_channels"] > 0:
-                print(f"    [{index}] {device['name']}")
+                hostapi_name = hostapis[device["hostapi"]]["name"]
+                print(f"    [{index}] {device['name']}  ({hostapi_name})")
         raise RuntimeError(
-            "VB-Audio CABLE Input was not found. Make sure VB-CABLE is installed."
+            "CABLE Input was not found. Check that VB-CABLE is installed and enabled."
         )
 
-    # Prefer the exact normal VB-CABLE device if several CABLE devices exist.
-    for index, name in matches:
-        if name.strip().lower() == "cable input":
-            return index
+    # WASAPI is the most reliable Windows backend for routing to VB-CABLE.
+    for index, name, hostapi_name in candidates:
+        if "WASAPI" in hostapi_name.upper():
+            return index, name
 
-    return matches[0][0]
+    return candidates[0][0], candidates[0][1]
 
 
 def play_to_cable(wav_file: Path) -> None:
-    """Play the generated WAV only through CABLE Input."""
-    device_index = find_cable_device()
+    """Play WAV exclusively to VB-CABLE CABLE Input."""
+    device_index, device_name = find_cable_device()
     device = sd.query_devices(device_index)
+    hostapi = sd.query_hostapis(device["hostapi"])["name"]
 
-    print(f"[zevWeather] Output: [{device_index}] {device['name']}")
+    print(f"[zevWeather] Direct output device: {device_name}")
+    print(f"[zevWeather] Audio backend: {hostapi}")
+    print("[zevWeather] Sending bulletin to VB-CABLE...")
 
     with wave.open(str(wav_file), "rb") as wav:
         channels = wav.getnchannels()
@@ -84,21 +92,28 @@ def play_to_cable(wav_file: Path) -> None:
 
     if sample_width != 2:
         raise RuntimeError(
-            f"Unsupported WAV sample width: {sample_width * 8}-bit. "
-            "Expected 16-bit PCM."
+            f"Generated WAV is {sample_width * 8}-bit; expected 16-bit PCM."
         )
 
-    import numpy as np
-
     audio = np.frombuffer(frames, dtype=np.int16)
-
     if channels > 1:
         audio = audio.reshape(-1, channels)
 
-    print("[zevWeather] Broadcasting bulletin to CABLE Input...")
-    sd.play(audio, samplerate=samplerate, device=device_index, blocking=True)
+    # Force the chosen device. WASAPI shared mode lets Windows convert the
+    # SAPI WAV sample rate/channels to whatever VB-CABLE currently accepts.
+    extra = None
+    if "WASAPI" in hostapi.upper():
+        extra = sd.WasapiSettings(exclusive=False, auto_convert=True)
+
+    sd.play(
+        audio,
+        samplerate=samplerate,
+        device=device_index,
+        blocking=True,
+        extra_settings=extra,
+    )
     sd.stop()
-    print("[zevWeather] Bulletin finished.")
+    print("[zevWeather] Bulletin sent to CABLE Input.")
 
 
 def fetch_weather() -> dict:
@@ -117,7 +132,7 @@ def fetch_weather() -> dict:
 
 
 def condition(code: int) -> str:
-    conditions = {
+    return {
         0: "bezchmurnie",
         1: "przeważnie bezchmurnie",
         2: "częściowe zachmurzenie",
@@ -139,11 +154,10 @@ def condition(code: int) -> str:
         95: "burze",
         96: "burze z gradem",
         99: "silne burze z gradem",
-    }
-    return conditions.get(code, "zmienne warunki")
+    }.get(code, "zmienne warunki")
 
 
-def polish_number(value: float | int) -> str:
+def number(value: float | int) -> str:
     return str(round(float(value)))
 
 
@@ -151,37 +165,21 @@ def make_script(data: dict) -> str:
     current = data["current"]
     daily = data["daily"]
 
-    temp = polish_number(current["temperature_2m"])
-    feels = polish_number(current["apparent_temperature"])
-    humidity = polish_number(current["relative_humidity_2m"])
-    wind = polish_number(current["wind_speed_10m"])
-
-    today_high = polish_number(daily["temperature_2m_max"][0])
-    today_low = polish_number(daily["temperature_2m_min"][0])
-    today_rain = daily["precipitation_probability_max"][0]
-
-    tomorrow_high = polish_number(daily["temperature_2m_max"][1])
-    tomorrow_low = polish_number(daily["temperature_2m_min"][1])
-    tomorrow_condition = condition(daily["weather_code"][1])
-    tomorrow_rain = daily["precipitation_probability_max"][1]
-
-    generated = datetime.now().strftime("%H:%M")
-
     return (
-        f"Tu zevWeather. Jest godzina {generated}. "
-        f"Najnowsza prognoza dla Poznania. "
-        f"Obecnie mamy {temp} stopni Celsjusza, "
-        f"odczuwalna temperatura to {feels} stopni. "
+        f"Tu zevWeather. Jest godzina {datetime.now().strftime('%H:%M')}. "
+        "Najnowsza prognoza dla Poznania. "
+        f"Obecnie mamy {number(current['temperature_2m'])} stopni Celsjusza, "
+        f"odczuwalna temperatura to {number(current['apparent_temperature'])} stopni. "
         f"Warunki: {condition(current['weather_code'])}. "
-        f"Wilgotność wynosi około {humidity} procent, "
-        f"a wiatr wieje z prędkością około {wind} kilometrów na godzinę. "
-        f"Dzisiaj temperatura maksymalna wyniesie około {today_high} stopni, "
-        f"a minimalna około {today_low}. "
-        f"Prawdopodobieństwo opadów wynosi do {today_rain} procent. "
-        f"Jutro: {tomorrow_condition}, temperatura od {tomorrow_low} "
-        f"do {tomorrow_high} stopni, z prawdopodobieństwem opadów "
-        f"do {tomorrow_rain} procent. "
-        f"To był zevWeather. Miłego dnia i zostańcie z nami na zevRadio."
+        f"Wilgotność wynosi około {number(current['relative_humidity_2m'])} procent, "
+        f"a wiatr wieje z prędkością około {number(current['wind_speed_10m'])} kilometrów na godzinę. "
+        f"Dzisiaj temperatura maksymalna wyniesie około {number(daily['temperature_2m_max'][0])} stopni, "
+        f"a minimalna około {number(daily['temperature_2m_min'][0])}. "
+        f"Prawdopodobieństwo opadów wynosi do {daily['precipitation_probability_max'][0]} procent. "
+        f"Jutro: {condition(daily['weather_code'][1])}, temperatura od "
+        f"{number(daily['temperature_2m_min'][1])} do {number(daily['temperature_2m_max'][1])} stopni, "
+        f"z prawdopodobieństwem opadów do {daily['precipitation_probability_max'][1]} procent. "
+        "To był zevWeather. Miłego dnia i zostańcie z nami na zevRadio."
     )
 
 
@@ -193,9 +191,7 @@ $synth = New-Object System.Speech.Synthesis.SpeechSynthesizer
 $polish = $synth.GetInstalledVoices() | Where-Object {
     $_.VoiceInfo.Culture.Name -like "pl-*"
 } | Select-Object -First 1
-if ($null -ne $polish) {
-    $synth.SelectVoice($polish.VoiceInfo.Name)
-}
+if ($null -ne $polish) { $synth.SelectVoice($polish.VoiceInfo.Name) }
 $synth.Rate = -1
 $synth.Volume = 100
 $synth.SetOutputToWaveFile($Output)
@@ -212,16 +208,8 @@ $synth.Dispose()
     try:
         subprocess.run(
             [
-                "powershell.exe",
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                str(ps_file),
-                "-Text",
-                text,
-                "-Output",
-                str(output.resolve()),
+                "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                "-File", str(ps_file), "-Text", text, "-Output", str(output.resolve()),
             ],
             check=True,
         )
@@ -233,14 +221,14 @@ def main() -> int:
     try:
         print("[zevWeather] Fetching live weather...")
         data = fetch_weather()
-
         script = make_script(data)
-        print(f"[zevWeather] Bulletin: {script}")
 
+        print(f"[zevWeather] Bulletin: {script}")
         print("[zevWeather] Generating TTS...")
         generate_tts(script, OUTPUT_FILE)
         print(f"[zevWeather] Created: {OUTPUT_FILE}")
 
+        # Automatically play immediately after TTS generation.
         play_to_cable(OUTPUT_FILE)
         return 0
 
