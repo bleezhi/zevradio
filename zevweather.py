@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-zevWeather - live weather bulletin + direct VB-CABLE playback.
+zevWeather - live weather bulletin + direct Voicemeeter playback.
 
 The generated bulletin is played directly to:
-    CABLE Input (VB-Audio Virtual Cable)
+    Voicemeeter Input (VB-Audio Voicemeeter VAIO)
 
 It never falls back to the Windows default speakers.
 """
@@ -32,22 +32,21 @@ except ImportError:
 LATITUDE = 52.4064
 LONGITUDE = 16.9252
 OUTPUT_FILE = Path(__file__).with_name("zevweather.wav")
-USER_AGENT = "zevWeather/1.2"
-CABLE_DEVICE = "CABLE Input"
+USER_AGENT = "zevWeather/1.3"
+
+# Exact device requested: main Voicemeeter VAIO bus.
+OUTPUT_DEVICE = "Voicemeeter Input (VB-Audio Voicemeeter VAIO)"
 
 
-def find_cable_device() -> tuple[int, str]:
-    """Find the actual playback endpoint for VB-CABLE, preferably WASAPI."""
+def find_output_device() -> tuple[int, str]:
+    """Find the exact main Voicemeeter VAIO playback endpoint."""
     devices = sd.query_devices()
     hostapis = sd.query_hostapis()
-
     candidates = []
 
     for index, device in enumerate(devices):
         name = device["name"]
-
-        # IMPORTANT: We want CABLE Input, not CABLE In 16ch or CABLE Output.
-        if name.strip().lower() != CABLE_DEVICE.lower():
+        if name.strip().lower() != OUTPUT_DEVICE.lower():
             continue
         if device["max_output_channels"] < 1:
             continue
@@ -56,17 +55,18 @@ def find_cable_device() -> tuple[int, str]:
         candidates.append((index, name, hostapi_name))
 
     if not candidates:
-        print("[zevWeather] ERROR: CABLE Input playback device not found.")
-        print("[zevWeather] Output devices detected:")
+        print(f"[zevWeather] ERROR: '{OUTPUT_DEVICE}' was not found.")
+        print("[zevWeather] Available output devices:")
         for index, device in enumerate(devices):
             if device["max_output_channels"] > 0:
                 hostapi_name = hostapis[device["hostapi"]]["name"]
-                print(f"    [{index}] {device['name']}  ({hostapi_name})")
+                print(f"    [{index}] {device['name']} ({hostapi_name})")
         raise RuntimeError(
-            "CABLE Input was not found. Check that VB-CABLE is installed and enabled."
+            "Voicemeeter Input was not found. Make sure Voicemeeter is running "
+            "and its VAIO playback device is enabled."
         )
 
-    # WASAPI is the most reliable Windows backend for routing to VB-CABLE.
+    # Prefer WASAPI on Windows.
     for index, name, hostapi_name in candidates:
         if "WASAPI" in hostapi_name.upper():
             return index, name
@@ -74,15 +74,15 @@ def find_cable_device() -> tuple[int, str]:
     return candidates[0][0], candidates[0][1]
 
 
-def play_to_cable(wav_file: Path) -> None:
-    """Play WAV exclusively to VB-CABLE CABLE Input."""
-    device_index, device_name = find_cable_device()
+def play_to_voicemeeter(wav_file: Path) -> None:
+    """Play WAV exclusively to the main Voicemeeter VAIO Input."""
+    device_index, device_name = find_output_device()
     device = sd.query_devices(device_index)
     hostapi = sd.query_hostapis(device["hostapi"])["name"]
 
     print(f"[zevWeather] Direct output device: {device_name}")
     print(f"[zevWeather] Audio backend: {hostapi}")
-    print("[zevWeather] Sending bulletin to VB-CABLE...")
+    print("[zevWeather] Sending bulletin to Voicemeeter Input...")
 
     with wave.open(str(wav_file), "rb") as wav:
         channels = wav.getnchannels()
@@ -99,8 +99,6 @@ def play_to_cable(wav_file: Path) -> None:
     if channels > 1:
         audio = audio.reshape(-1, channels)
 
-    # Force the chosen device. WASAPI shared mode lets Windows convert the
-    # SAPI WAV sample rate/channels to whatever VB-CABLE currently accepts.
     extra = None
     if "WASAPI" in hostapi.upper():
         extra = sd.WasapiSettings(exclusive=False, auto_convert=True)
@@ -113,7 +111,7 @@ def play_to_cable(wav_file: Path) -> None:
         extra_settings=extra,
     )
     sd.stop()
-    print("[zevWeather] Bulletin sent to CABLE Input.")
+    print("[zevWeather] Bulletin sent to Voicemeeter Input.")
 
 
 def fetch_weather() -> dict:
@@ -229,7 +227,7 @@ def main() -> int:
         print(f"[zevWeather] Created: {OUTPUT_FILE}")
 
         # Automatically play immediately after TTS generation.
-        play_to_cable(OUTPUT_FILE)
+        play_to_voicemeeter(OUTPUT_FILE)
         return 0
 
     except Exception as exc:
