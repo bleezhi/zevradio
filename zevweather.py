@@ -2,14 +2,16 @@
 """
 zevWeather - real-time weather bulletin generator for zevRadio.
 
-Fetches weather for Poznan, Poland from Open-Meteo and generates a WAV
-announcement using the Windows built-in Microsoft Speech API (SAPI).
+Fetches weather for Poznan, Poland from Open-Meteo, generates a WAV
+announcement using Windows SAPI, then plays it exclusively to:
+    CABLE Input (VB-Audio Virtual Cable)
 
 Requirements:
     Python 3.10+
-    Windows (for built-in SAPI TTS)
+    Windows
+    pip install sounddevice
 
-No API key required.
+No weather API key required.
 """
 
 from __future__ import annotations
@@ -23,11 +25,80 @@ import urllib.request
 from datetime import datetime
 from pathlib import Path
 
+try:
+    import sounddevice as sd
+    import wave
+except ImportError:
+    print("[zevWeather] Missing dependency. Install it with:")
+    print("    python -m pip install sounddevice")
+    raise
+
 LATITUDE = 52.4064
 LONGITUDE = 16.9252
 LOCATION_NAME = "Poznan"
 OUTPUT_FILE = Path(__file__).with_name("zevweather.wav")
-USER_AGENT = "zevWeather/1.0"
+CABLE_DEVICE_NAME = "CABLE Input"
+USER_AGENT = "zevWeather/1.1"
+
+
+def find_cable_device() -> int:
+    """Find the VB-Audio CABLE Input output device."""
+    devices = sd.query_devices()
+
+    matches = []
+    for index, device in enumerate(devices):
+        name = device["name"]
+        if CABLE_DEVICE_NAME.lower() in name.lower() and device["max_output_channels"] > 0:
+            matches.append((index, name))
+
+    if not matches:
+        print("[zevWeather] ERROR: Could not find 'CABLE Input'.")
+        print("[zevWeather] Available output devices:")
+        for index, device in enumerate(devices):
+            if device["max_output_channels"] > 0:
+                print(f"    [{index}] {device['name']}")
+        raise RuntimeError(
+            "VB-Audio CABLE Input was not found. Make sure VB-CABLE is installed."
+        )
+
+    # Prefer the exact normal VB-CABLE device if several CABLE devices exist.
+    for index, name in matches:
+        if name.strip().lower() == "cable input":
+            return index
+
+    return matches[0][0]
+
+
+def play_to_cable(wav_file: Path) -> None:
+    """Play the generated WAV only through CABLE Input."""
+    device_index = find_cable_device()
+    device = sd.query_devices(device_index)
+
+    print(f"[zevWeather] Output: [{device_index}] {device['name']}")
+
+    with wave.open(str(wav_file), "rb") as wav:
+        channels = wav.getnchannels()
+        samplerate = wav.getframerate()
+        sample_width = wav.getsampwidth()
+        frames = wav.readframes(wav.getnframes())
+
+    if sample_width != 2:
+        raise RuntimeError(
+            f"Unsupported WAV sample width: {sample_width * 8}-bit. "
+            "Expected 16-bit PCM."
+        )
+
+    import numpy as np
+
+    audio = np.frombuffer(frames, dtype=np.int16)
+
+    if channels > 1:
+        audio = audio.reshape(-1, channels)
+
+    print("[zevWeather] Broadcasting bulletin to CABLE Input...")
+    sd.play(audio, samplerate=samplerate, device=device_index, blocking=True)
+    sd.stop()
+    print("[zevWeather] Bulletin finished.")
 
 
 def fetch_weather() -> dict:
@@ -73,10 +144,7 @@ def condition(code: int) -> str:
 
 
 def polish_number(value: float | int) -> str:
-    value = round(float(value))
-    if value == 1:
-        return "1"
-    return str(value)
+    return str(round(float(value)))
 
 
 def make_script(data: dict) -> str:
@@ -87,7 +155,6 @@ def make_script(data: dict) -> str:
     feels = polish_number(current["apparent_temperature"])
     humidity = polish_number(current["relative_humidity_2m"])
     wind = polish_number(current["wind_speed_10m"])
-    now_condition = condition(current["weather_code"])
 
     today_high = polish_number(daily["temperature_2m_max"][0])
     today_low = polish_number(daily["temperature_2m_min"][0])
@@ -103,21 +170,22 @@ def make_script(data: dict) -> str:
     return (
         f"Tu zevWeather. Jest godzina {generated}. "
         f"Najnowsza prognoza dla Poznania. "
-        f"Obecnie mamy {temp} stopni Celsjusza, odczuwalna temperatura to {feels} stopni. "
-        f"Warunki: {now_condition}. "
-        f"Wilgotność wynosi około {humidity} procent, a wiatr wieje z prędkością około {wind} kilometrów na godzinę. "
+        f"Obecnie mamy {temp} stopni Celsjusza, "
+        f"odczuwalna temperatura to {feels} stopni. "
+        f"Warunki: {condition(current['weather_code'])}. "
+        f"Wilgotność wynosi około {humidity} procent, "
+        f"a wiatr wieje z prędkością około {wind} kilometrów na godzinę. "
         f"Dzisiaj temperatura maksymalna wyniesie około {today_high} stopni, "
         f"a minimalna około {today_low}. "
         f"Prawdopodobieństwo opadów wynosi do {today_rain} procent. "
-        f"Jutro: {tomorrow_condition}, temperatura od {tomorrow_low} do {tomorrow_high} stopni, "
-        f"z prawdopodobieństwem opadów do {tomorrow_rain} procent. "
+        f"Jutro: {tomorrow_condition}, temperatura od {tomorrow_low} "
+        f"do {tomorrow_high} stopni, z prawdopodobieństwem opadów "
+        f"do {tomorrow_rain} procent. "
         f"To był zevWeather. Miłego dnia i zostańcie z nami na zevRadio."
     )
 
 
 def generate_tts(text: str, output: Path) -> None:
-    # SAPI voice selection: use the first installed Polish voice if available,
-    # otherwise fall back to the Windows default voice.
     ps_script = r'''
 param([string]$Text, [string]$Output)
 Add-Type -AssemblyName System.Speech
@@ -134,7 +202,10 @@ $synth.SetOutputToWaveFile($Output)
 $synth.Speak($Text)
 $synth.Dispose()
 '''
-    with tempfile.NamedTemporaryFile("w", suffix=".ps1", delete=False, encoding="utf-8") as f:
+
+    with tempfile.NamedTemporaryFile(
+        "w", suffix=".ps1", delete=False, encoding="utf-8"
+    ) as f:
         ps_file = Path(f.name)
         f.write(ps_script)
 
@@ -162,12 +233,17 @@ def main() -> int:
     try:
         print("[zevWeather] Fetching live weather...")
         data = fetch_weather()
+
         script = make_script(data)
+        print(f"[zevWeather] Bulletin: {script}")
+
         print("[zevWeather] Generating TTS...")
         generate_tts(script, OUTPUT_FILE)
         print(f"[zevWeather] Created: {OUTPUT_FILE}")
-        print("[zevWeather] Ready for broadcast.")
+
+        play_to_cable(OUTPUT_FILE)
         return 0
+
     except Exception as exc:
         print(f"[zevWeather] ERROR: {exc}", file=sys.stderr)
         return 1
