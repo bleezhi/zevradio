@@ -5,7 +5,7 @@ metadata:
   file_format: 1
   grc_version: 3.10.12.0
   title: UVB-76 Buzzer IQ TCP
-  description: More realistic software-only UVB-76-style buzzer with repeated rough-sounding bursts
+  description: Software-only UVB-76-style buzzer with repeated rough-sounding bursts
   author: bleez
 options:
   parameters:
@@ -50,21 +50,13 @@ blocks:
   states:
     coordinate: [32, 160]
     rotation: 0
-- name: buzz_duty
-  id: variable
-  parameters:
-    comment: ''
-    value: '0.48'
-  states:
-    coordinate: [32, 224]
-    rotation: 0
 - name: buzz_amp
   id: variable
   parameters:
     comment: ''
     value: '0.85'
   states:
-    coordinate: [32, 288]
+    coordinate: [32, 224]
     rotation: 0
 - name: noise_amp
   id: variable
@@ -72,7 +64,7 @@ blocks:
     comment: ''
     value: '0.07'
   states:
-    coordinate: [32, 352]
+    coordinate: [32, 288]
     rotation: 0
 - name: tone
   id: analog_sig_source_x
@@ -93,7 +85,7 @@ blocks:
     coordinate: [256, 128]
     rotation: 0
 - name: noise
-  id: analog_noise_source_c
+  id: analog_noise_source_x
   parameters:
     affinity: ''
     alias: ''
@@ -102,7 +94,8 @@ blocks:
     maxoutbuf: '0'
     minoutbuf: '0'
     noise_type: 'analog.GR_GAUSSIAN'
-    seed: '0'
+    seed: '42'
+    type: complex
   states:
     coordinate: [256, 256]
     rotation: 0
@@ -132,7 +125,7 @@ blocks:
     phase: '0'
     samp_rate: samp_rate
     type: float
-    waveform: 'analog.GR_SQUARE_WAVE'
+    waveform: 'analog.GR_SQR_WAVE'
   states:
     coordinate: [480, 320]
     rotation: 0
