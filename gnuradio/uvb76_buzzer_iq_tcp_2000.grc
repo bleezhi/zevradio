@@ -5,7 +5,7 @@ metadata:
   file_format: 1
   grc_version: 3.10.12.0
   title: UVB-76 Buzzer IQ TCP
-  description: Software-only UVB-76-style buzzer waveform with approximately 25 bursts per minute, sent as complex IQ to SimTx
+  description: More realistic software-only UVB-76-style buzzer with repeated rough-sounding bursts
   author: bleez
 options:
   parameters:
@@ -46,7 +46,7 @@ blocks:
   id: variable
   parameters:
     comment: ''
-    value: '25.0/60.0'
+    value: '1.0/2.5'
   states:
     coordinate: [32, 160]
     rotation: 0
@@ -54,7 +54,7 @@ blocks:
   id: variable
   parameters:
     comment: ''
-    value: '0.42'
+    value: '0.48'
   states:
     coordinate: [32, 224]
     rotation: 0
@@ -65,6 +65,14 @@ blocks:
     value: '0.85'
   states:
     coordinate: [32, 288]
+    rotation: 0
+- name: noise_amp
+  id: variable
+  parameters:
+    comment: ''
+    value: '0.07'
+  states:
+    coordinate: [32, 352]
     rotation: 0
 - name: tone
   id: analog_sig_source_x
@@ -84,6 +92,32 @@ blocks:
   states:
     coordinate: [256, 128]
     rotation: 0
+- name: noise
+  id: analog_noise_source_c
+  parameters:
+    affinity: ''
+    alias: ''
+    amp: noise_amp
+    comment: ''
+    maxoutbuf: '0'
+    minoutbuf: '0'
+    noise_type: 'analog.GR_GAUSSIAN'
+    seed: '0'
+  states:
+    coordinate: [256, 256]
+    rotation: 0
+- name: add
+  id: blocks_add_xx
+  parameters:
+    affinity: ''
+    alias: ''
+    comment: ''
+    num_inputs: '2'
+    type: complex
+    vlen: '1'
+  states:
+    coordinate: [480, 160]
+    rotation: 0
 - name: envelope
   id: analog_sig_source_x
   parameters:
@@ -100,7 +134,7 @@ blocks:
     type: float
     waveform: 'analog.GR_SQUARE_WAVE'
   states:
-    coordinate: [256, 304]
+    coordinate: [480, 320]
     rotation: 0
 - name: envelope_complex
   id: blocks_float_to_complex
@@ -111,7 +145,7 @@ blocks:
     maxoutbuf: '0'
     minoutbuf: '0'
   states:
-    coordinate: [512, 304]
+    coordinate: [704, 320]
     rotation: 0
 - name: multiply
   id: blocks_multiply_xx
@@ -123,7 +157,7 @@ blocks:
     type: complex
     vlen: '1'
   states:
-    coordinate: [704, 176]
+    coordinate: [912, 176]
     rotation: 0
 - name: tcp_sink
   id: network_tcp_sink
@@ -139,10 +173,12 @@ blocks:
     port: '2000'
     type: complex
   states:
-    coordinate: [944, 176]
+    coordinate: [1152, 176]
     rotation: 0
 connections:
-- [tone, '0', multiply, '0']
+- [tone, '0', add, '0']
+- [noise, '0', add, '1']
+- [add, '0', multiply, '0']
 - [envelope, '0', envelope_complex, '0']
 - [envelope_complex, '0', multiply, '1']
 - [multiply, '0', tcp_sink, '0']
