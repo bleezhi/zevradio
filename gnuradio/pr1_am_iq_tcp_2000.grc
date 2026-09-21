@@ -1,0 +1,132 @@
+%YAML 1.2
+---
+file_format: 1
+metadata:
+  file_format: 1
+  grc_version: 3.10.12.0
+  title: PR1 AM IQ TCP
+  description: PR1 mono audio to simple AM baseband IQ streamed to TCP port 2000
+  author: bleez
+
+options:
+  parameters:
+    author: bleez
+    catch_exceptions: 'True'
+    category: '[GRC Hier Blocks]'
+    description: PR1 mono audio to AM IQ over TCP
+    generate_options: qt_gui
+    id: pr1_am_iq_tcp
+    output_language: python
+    run: 'True'
+    thread_safe_setters: ''
+    title: PR1 AM IQ TCP
+  states:
+    bus_sink: false
+    bus_source: false
+    coordinate: [0, 0]
+    rotation: 0
+    state: enabled
+
+blocks:
+- name: samp_rate
+  id: variable
+  parameters:
+    comment: ''
+    value: '48000'
+  states:
+    coordinate: [32, 32]
+    rotation: 0
+
+- name: audio_source
+  id: audio_source
+  parameters:
+    affinity: ''
+    alias: ''
+    comment: ''
+    device_name: pipewire
+    num_inputs: '1'
+    ok_to_block: 'True'
+    sample_rate: samp_rate
+    type: float
+    vlen: '1'
+  states:
+    coordinate: [64, 160]
+    rotation: 0
+
+- name: multiply
+  id: blocks_multiply_const_vxx
+  parameters:
+    affinity: ''
+    alias: ''
+    comment: ''
+    const: '0.5'
+    maxoutbuf: '0'
+    minoutbuf: '0'
+    type: float
+    vlen: '1'
+  states:
+    coordinate: [304, 160]
+    rotation: 0
+
+- name: add
+  id: blocks_add_const_vxx
+  parameters:
+    affinity: ''
+    alias: ''
+    comment: ''
+    const: '1.0'
+    type: float
+    vlen: '1'
+  states:
+    coordinate: [512, 160]
+    rotation: 0
+
+- name: zero
+  id: analog_const_source_x
+  parameters:
+    affinity: ''
+    alias: ''
+    comment: ''
+    const: '0'
+    maxoutbuf: '0'
+    minoutbuf: '0'
+    type: float
+  states:
+    coordinate: [512, 288]
+    rotation: 0
+
+- name: float_to_complex
+  id: blocks_float_to_complex
+  parameters:
+    affinity: ''
+    alias: ''
+    comment: ''
+    maxoutbuf: '0'
+    minoutbuf: '0'
+  states:
+    coordinate: [736, 192]
+    rotation: 0
+
+- name: tcp_sink
+  id: network_tcp_sink
+  parameters:
+    affinity: ''
+    alias: ''
+    comment: ''
+    addr: 127.0.0.1
+    eof: 'False'
+    maxoutbuf: '0'
+    minoutbuf: '0'
+    mtu: '1472'
+    port: '2000'
+    type: complex
+  states:
+    coordinate: [976, 192]
+    rotation: 0
+
+connections:
+- [audio_source, '0', multiply, '0']
+- [multiply, '0', add, '0']
+- [add, '0', float_to_complex, '0']
+- [zero, '0', float_to_complex, '1']
+- [float_to_complex, '0', tcp_sink, '0']
