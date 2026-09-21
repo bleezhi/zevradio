@@ -1,0 +1,80 @@
+%YAML 1.2
+---
+file_format: 1
+metadata:
+  file_format: 1
+  grc_version: 3.10.12.0
+  title: UVB-76 Buzzer IQ TCP
+  description: Software-only buzzer-like IQ signal for SimTx over TCP port 2000
+  author: bleez
+options:
+  parameters:
+    author: bleez
+    catch_exceptions: 'True'
+    category: '[GRC Hier Blocks]'
+    description: UVB-76-style buzzer simulation to SimTx
+    generate_options: qt_gui
+    id: uvb76_buzzer_iq_tcp
+    output_language: python
+    run: 'True'
+    thread_safe_setters: ''
+    title: UVB-76 Buzzer IQ TCP
+  states:
+    bus_sink: false
+    bus_source: false
+    coordinate: [0, 0]
+    rotation: 0
+    state: enabled
+blocks:
+- name: samp_rate
+  id: variable
+  parameters:
+    comment: ''
+    value: '48000'
+  states:
+    coordinate: [32, 32]
+    rotation: 0
+- name: tone_freq
+  id: variable
+  parameters:
+    comment: ''
+    value: '600'
+  states:
+    coordinate: [32, 96]
+    rotation: 0
+- name: tone
+  id: analog_sig_source_x
+  parameters:
+    affinity: ''
+    alias: ''
+    amp: '0.8'
+    comment: ''
+    freq: tone_freq
+    maxoutbuf: '0'
+    minoutbuf: '0'
+    offset: '0'
+    phase: '0'
+    samp_rate: samp_rate
+    type: complex
+    waveform: 'analog.GR_SIN_WAVE'
+  states:
+    coordinate: [256, 160]
+    rotation: 0
+- name: tcp_sink
+  id: network_tcp_sink
+  parameters:
+    addr: 127.0.0.1
+    affinity: ''
+    alias: ''
+    comment: ''
+    eof: 'False'
+    maxoutbuf: '0'
+    minoutbuf: '0'
+    mtu: '1472'
+    port: '2000'
+    type: complex
+  states:
+    coordinate: [560, 160]
+    rotation: 0
+connections:
+- [tone, '0', tcp_sink, '0']
