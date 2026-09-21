@@ -5,7 +5,7 @@ metadata:
   file_format: 1
   grc_version: 3.10.12.0
   title: UVB-76 Buzzer IQ TCP
-  description: Software-only buzzer-like IQ signal for SimTx over TCP port 2000
+  description: Software-only UVB-76-style buzzer waveform with approximately 25 bursts per minute, sent as complex IQ to SimTx
   author: bleez
 options:
   parameters:
@@ -34,22 +34,46 @@ blocks:
   states:
     coordinate: [32, 32]
     rotation: 0
-- name: tone_freq
+- name: buzz_freq
   id: variable
   parameters:
     comment: ''
-    value: '600'
+    value: '625'
   states:
     coordinate: [32, 96]
+    rotation: 0
+- name: buzz_rate
+  id: variable
+  parameters:
+    comment: ''
+    value: '25.0/60.0'
+  states:
+    coordinate: [32, 160]
+    rotation: 0
+- name: buzz_duty
+  id: variable
+  parameters:
+    comment: ''
+    value: '0.42'
+  states:
+    coordinate: [32, 224]
+    rotation: 0
+- name: buzz_amp
+  id: variable
+  parameters:
+    comment: ''
+    value: '0.85'
+  states:
+    coordinate: [32, 288]
     rotation: 0
 - name: tone
   id: analog_sig_source_x
   parameters:
     affinity: ''
     alias: ''
-    amp: '0.8'
+    amp: buzz_amp
     comment: ''
-    freq: tone_freq
+    freq: buzz_freq
     maxoutbuf: '0'
     minoutbuf: '0'
     offset: '0'
@@ -58,7 +82,48 @@ blocks:
     type: complex
     waveform: 'analog.GR_SIN_WAVE'
   states:
-    coordinate: [256, 160]
+    coordinate: [256, 128]
+    rotation: 0
+- name: envelope
+  id: analog_sig_source_x
+  parameters:
+    affinity: ''
+    alias: ''
+    amp: '0.5'
+    comment: ''
+    freq: buzz_rate
+    maxoutbuf: '0'
+    minoutbuf: '0'
+    offset: '0.5'
+    phase: '0'
+    samp_rate: samp_rate
+    type: float
+    waveform: 'analog.GR_SQUARE_WAVE'
+  states:
+    coordinate: [256, 304]
+    rotation: 0
+- name: envelope_complex
+  id: blocks_float_to_complex
+  parameters:
+    affinity: ''
+    alias: ''
+    comment: ''
+    maxoutbuf: '0'
+    minoutbuf: '0'
+  states:
+    coordinate: [512, 304]
+    rotation: 0
+- name: multiply
+  id: blocks_multiply_xx
+  parameters:
+    affinity: ''
+    alias: ''
+    comment: ''
+    num_inputs: '2'
+    type: complex
+    vlen: '1'
+  states:
+    coordinate: [704, 176]
     rotation: 0
 - name: tcp_sink
   id: network_tcp_sink
@@ -74,7 +139,10 @@ blocks:
     port: '2000'
     type: complex
   states:
-    coordinate: [560, 160]
+    coordinate: [944, 176]
     rotation: 0
 connections:
-- [tone, '0', tcp_sink, '0']
+- [tone, '0', multiply, '0']
+- [envelope, '0', envelope_complex, '0']
+- [envelope_complex, '0', multiply, '1']
+- [multiply, '0', tcp_sink, '0']
